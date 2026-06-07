@@ -16530,7 +16530,9 @@ class SidebarChatProvider implements vscode.WebviewViewProvider {
 
     private _initHistory() {
         this._chatHistory = [{ role: 'system', content: this._systemPrompt }];
-        this._displayMessages = [];
+        const welcomeText = `![충성](https://raw.githubusercontent.com/wonseokjung/solopreneur-ai-agents/main/agents/kodari/assets/kodari_salute.png)\n\n**충성! 엄청난 개발부장입니다!** 🫡\n\n대표님, 오늘도 1인 기업 성공을 향해 힘차게 달려봅시다! 이 엄청난이가 대표님 곁에서 든든하게 보좌하여 싹 처리해 드리겠습니다! 무엇이든 명령만 내려주십시오! 😎🚀`;
+        this._chatHistory.push({ role: 'assistant', content: welcomeText });
+        this._displayMessages = [{ role: 'ai', text: welcomeText }];
     }
 
     public resetChat() {
@@ -19509,7 +19511,39 @@ ${catalog.map((c, i) => `${i + 1}. agent=${c.agentId} tool=${c.tool} — ${c.des
                     );
                 } catch (e: any) {
                     post({ type: 'agentEnd', agent: 'ceo' });
-                    post({ type: 'error', value: `⚠️ CEO 응답 실패: ${e?.message || e}` });
+                    let detail = '';
+                    try {
+                        if (e?.response?.data?.on) {
+                            const buf = await new Promise<string>((resolve) => {
+                                let acc = '';
+                                e.response.data.on('data', (c: Buffer) => { acc += c.toString(); });
+                                e.response.data.on('end', () => resolve(acc));
+                                e.response.data.on('error', () => resolve(acc));
+                            });
+                            try { detail = JSON.parse(buf).error?.message || JSON.parse(buf).error || buf.slice(0, 300); }
+                            catch { detail = buf.slice(0, 300); }
+                        } else if (e?.response?.data) {
+                            detail = typeof e.response.data === 'string' ? e.response.data.slice(0, 300) : JSON.stringify(e.response.data).slice(0, 300);
+                        }
+                    } catch { /* ignore */ }
+                    let hint = '';
+                    if (/context length|context_length|num_ctx|maximum context/i.test(detail)) {
+                        hint = '\n💡 컨텍스트 초과 — 다음 중 하나를 수행하세요:\n  • Ollama 사용 시: 안티그래비티 설정에서 `connectAiLab.numCtx`를 16384 또는 32768로 늘려주세요.\n  • LM Studio 사용 시: LM Studio 모델 로딩 화면에서 우측 **Context Length**를 16384 이상으로 설정하고 모델을 다시 로드하세요.\n  • 또는 회사 폴더의 `_shared/decisions.md` / `_agents/ceo/memory.md` 내용을 줄여주세요.';
+                    } else if (/out of memory|cuda|allocation|vram/i.test(detail)) {
+                        hint = '\n💡 메모리 부족 — 작은 모델 사용 또는 다른 무거운 앱 종료 후 재시도.';
+                    } else if (/model failed to load|failed to load model|resource limitations|not found in the list of loaded models|model.*not.*loaded|unloaded/i.test(detail)) {
+                        hint = '\n💡 모델 로드 실패 — 가장 흔한 원인부터 시도:'
+                             + '\n  ⚡ LM Studio 사용자라면: LM Studio에서 모델이 제대로 로드(Load)되었는지 확인해 주세요.'
+                             + '\n  1) 더 작은 모델로 변경 (예: gemma2:2b, llama3.2:1b, qwen2.5:1.5b)'
+                             + '\n  2) Ollama 재시작 (`pkill ollama && ollama serve`) 후 재시도'
+                             + '\n  3) 모델 다시 받기 (`ollama pull <모델명>`) — 다운로드가 깨졌을 수 있어요'
+                             + '\n  4) 다른 무거운 앱(브라우저 탭/도커/IDE) 종료해서 RAM 확보';
+                    } else if (e?.code === 'ECONNREFUSED') {
+                        hint = '\n💡 LLM 서버에 연결 못함 — Ollama/LM Studio가 켜져 있는지 확인.'
+                             + '\n  ⋯(더보기) → ⚙️ 설정 → "AI 엔진 변경"에서 사용 중인 엔진 선택.';
+                    }
+                    const stackTop = e?.stack ? String(e.stack).split('\n').slice(0, 3).join(' | ').slice(0, 300) : '';
+                    post({ type: 'error', value: `⚠️ CEO 응답 실패: ${e.message}${detail ? '\n원인: ' + detail : ''}${stackTop ? '\n[stack] ' + stackTop : ''}${hint}` });
                     return;
                 }
                 post({ type: 'agentEnd', agent: 'ceo' });
@@ -19824,6 +19858,7 @@ ${catalog.map((c, i) => `${i + 1}. agent=${c.agentId} tool=${c.tool} — ${c.des
                     const direct = idLookup.get(raw) || idLookup.get(raw.toLowerCase());
                     if (direct) return { ...t, agent: direct };
                     if (koreanAlias[raw]) return { ...t, agent: koreanAlias[raw] };
+                    if (raw.toLowerCase() === 'ceo') return { ...t, agent: 'secretary' };
                     // partial: any specialist id that appears as substring
                     const lower = raw.toLowerCase();
                     const hit = SPECIALIST_IDS.find(id => lower.includes(id));
